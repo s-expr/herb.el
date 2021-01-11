@@ -16,3 +16,4 @@
 (defconst hb:status:env-unset 0)
 (defconst hb:status:need-more-args 0)
 
+(provide 'hb-protocol)
