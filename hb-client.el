@@ -1,69 +1,65 @@
 (require 'xelb)
+
 (require 'hb-utils)
 (require 'hb-protocol)
+
+
 ;;would be nice to have traits but this works I guess
 (defclass hb:client ()
 	((connection :type xcb:connection
-							:initform (xcb:connect)
-							:initarg :connection
-							:protection :private)
+							 :initform (xcb:connect)
+							 :protection :private)
 	 
 	 (-argsa :allocation :class
-					 :initarg :args-atom
-					 :type xcb:Atom
-					 :protection :private)
+					 :type xcb:ATOM
+					 :protection :public)
 
 	 (-outputa :allocation :class
-						 :initarg :args-atom
-						 :type xcb:Atom
-						 :protection :private)
+						 :type xcb:ATOM
+						 :protection :public)
 
 	 (-statusa :allocation :class
-						 :type xcb:Atom
-						 :protection :private)
+						 :type xcb:ATOM
+						 :protection :public)
 
 	 (last-output :initform nil)
 
-	 (-client-window :type xcb:WINDOW
+	 (-client-window :allocation :class
+									 :type xcb:WINDOW
 									 :protection :private)
 
 	 (-root-window :type xcb:WINDOW
 								 :protection :private))
-
-	"Class containing representing the active connection to hlwm") 
-
-(hb:client:-create-atom-accessor -argsa hb:atoms:ipc-args)
-(hb:client:-create-atom-accessor -outputa hb:atoms:ipc-output)
-(hb:client:-create-atom-accessor -statusa hb:atoms:ipc-status)
+	"Class containing representing the active connection to hlwm.") 
 
 (defun hb:connect ()
-	(let ((client (make-instance 'hb:client)))
-		(with-slots (connection -client-window -root-window) client	
-			(setf -root-window (hb:-get-root-window connection))
-			(let ((wid (xcb:generate-id connection)))
-				(setf -client-window wid)
-				(xcb:+request connection
-						(make-instance 'xcb:CreateWindow
-													 :class xcb:WindowClass:InputOutput
-													 :wid (xcb:generate-id connection)
-													 :parent -root-window
-													 :depth 0
-													 :border-width 0
-													 :x 42
-													 :y 42
-													 :width 42
-													 :height 42
-													 :visual 0
-													 :value-mask xcb:CW:OverrideRedirect
-													 :override-redirect 1))))
-		client))
-;create the window, set the atoms
-;ensure that atoms are set for ipc
-	
-;destroy the client window
-(cl-defmethod hb:disconnect ((client hb:client)))
+	(let ((client (make-instance 'hb:client))
+				(parent (hb:-curframe-wid)))
+		(hb:client:-fetch-unset-slot
+		 client -argsa hb:atoms:ipc-args)
+		(hb:client:-fetch-unset-slot
+		 client -statusa hb:atoms:ipc-status)
+		(hb:client:-fetch-unset-slot
+		 client -outputa hb:atoms:ipc-output)
+		(with-slots (connection
+								 -client-window
+								 -root-window) client
+			(xcb:icccm:init connection)
+			(setf -root-window (hb:get-root-window connection))
+			;;(setf -client-window (hb:spawn-ipc-window connection parent))
+			client)))
 
-;returns alist containing return code and value
+;;destroy the client window
+(cl-defmethod hb:disconnect ((client hb:client))
+	(with-slots (connection -client-window) client
+		(xcb:+request connection
+				(make-instance 'xcb:DestroyWindow
+											 :window -client-window)))
+	(xcb:disconnect connection)) 
+			
+
+
+;;returns alist containing return code and value
 (cl-defmethod hb:send-command ((client hb:client) cmds))
 
 ;;something to interface with attributes,
@@ -77,9 +73,24 @@
 ;;into foo.bar.baz
 
 (cl-defmethod hb:client:get-output ((client hb:client)))
-;save the layout with the windowID's replaced with some sort of
-;unique buffer id and rehydrate upon loading the layout?
-					 
-					 
+;;save the layout with the windowID's replaced with some sort of
+;;unique buffer id and rehydrate upon loading the layout?
 
+(cl-defmethod hb:client:-fetch-atom ((client hb:client) atom-name)
+	(with-slots (connection) client
+		(slot-value (xcb:+request-unchecked+reply connection
+										(make-instance 'xcb:InternAtom
+																	 :only-if-exists 0
+																	 :name-len (length atom-name)
+																	 :name atom-name))
+								'atom)))
 
+(defmacro hb:client:-fetch-unset-slot (client slot atom-name)
+	`(unless (slot-boundp ,client (quote ,slot))
+		 (with-slots (,slot) ,client
+			 (setf ,slot (hb:client:-fetch-atom ,client ,atom-name)))))
+
+(defun hb:-curframe-wid ()
+	(string-to-number
+	 (frame-parameter
+		(selected-frame) 'window-id)))
